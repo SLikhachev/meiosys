@@ -372,4 +372,4 @@ const domContainer = document.getElementById('app');
 const root = ReactDOM.createRoot(domContainer);
 cells.map(cell => root.render( e(AppView, {cell} )));
 
-//meiosisTracer({ selector: "#tracer", streams: [ states, update ] });
+meiosisTracer({ selector: "#tracer", streams: [ states, cells ] });
