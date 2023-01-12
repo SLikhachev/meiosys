@@ -10,6 +10,7 @@ const P = patch => state => Object.assign(state, patch);
 // lift up the update stream
 const lift = update => patch => update(P(patch));
 
+// infinite cycle drop guard function
 const dropRepeats = (states, onchange = I) => {
   let prev = undefined;
   const result = m.stream();
@@ -29,6 +30,7 @@ const dropRepeats = (states, onchange = I) => {
   return result;
 };
 
+// utils for description string
 const humanList = s => xs => xs.length > 1 ?
   `${xs.slice(0, -1).join(", ")} ${s} ${xs.slice(-1)}` :
   xs.join("");
@@ -44,6 +46,8 @@ const descString = R.pipe(
   x => x + "."
 )
 
+// react components
+// home
 const HomeView = function(props) {
 
   const login = evt => props.cell.disp(['login', evt]);
@@ -51,14 +55,14 @@ const HomeView = function(props) {
   return e("div", {className: "app"},
     e("nav", {className:"header"},
       e("h1", null, "Boxes"),
-      e('a', { href: '#' }, 'Home'),
-      e('a', { href: '#', onClick: login }, 'Login')
+      e('a', { href: '#' }, 'Домой'),
+      e('a', { href: '#', onClick: login }, 'Войти')
     ),
     e('h2', {className: 'cent'},
       "Чтобы поиграть в кубики нужно залогиниться")
   )
 }
-
+// login
 const LoginView = function(props) {
 
   const home = evt => props.cell.disp(['home', evt]);
@@ -68,7 +72,7 @@ const LoginView = function(props) {
   return e("div", {className: "app"},
     e("nav", {className:"header"},
       e("h1", null, "Boxes"),
-      e('a', { href: '#', onClick: home}, 'Home'),
+      e('a', { href: '#', onClick: home}, 'Домой'),
     ),
     e('form', {className: 'cent', onSubmit: submit},
       e('legend', null, "Форма входа: любой текст в полях правильный"),
@@ -84,7 +88,7 @@ const LoginView = function(props) {
     )
   )
 }
-
+// play
 const PlayView = function(props) {
   const cell = props.cell;
   const _add = (evt, color) => {
@@ -95,7 +99,7 @@ const PlayView = function(props) {
     evt.preventDefault();
     return cell.disp(['removeBox', idx])
   }
-  const logout = evt => cell.disp(['home', evt])
+  const logout = evt => cell.disp(['logout', evt])
 
   return e("div", {className: "app"},
     e("nav", {className:"header"},
@@ -107,7 +111,7 @@ const PlayView = function(props) {
           }, "+"
         )
       ),
-      e('a', { href: '#', onClick: logout }, "Logout")
+      e('a', { href: '#', onClick: logout }, "Выйти")
     ),
     e("p", null, cell.state.description),
     e("div", {className: "desc"},
@@ -121,7 +125,8 @@ const PlayView = function(props) {
     )
   )
 }
-
+// services definitions
+// login
 const loginService = {
   // call the service when the view changes
   onchange: state => state.view,
@@ -133,6 +138,16 @@ const loginService = {
     }
   }
 };
+// play
+const playService = {
+  onchange: state => state.view,
+  run: cell => {
+    if (cell.state.view === "play") {
+      // load play from localStorage async
+      cell.disp(['loadPlay'])
+    }
+  }
+}
 
 // application object
 const app = {
@@ -144,7 +159,7 @@ const app = {
     formInitial: {},
     view: 'home'
   },
-  services: [loginService],
+  services: [loginService, playService],
   views: {
     home: HomeView,
     login: LoginView,
@@ -166,10 +181,10 @@ const disp = m.stream();
 
 const createCell = state => ({ state, disp });
 
-// cells without srvices
+// cells stream as states map
 const cells = states.map(createCell);
 
-// cells with srrvices
+// cells with dropRepeats if used
 //const cells = dropRepeats(states).map(createCell);
 
 /* service must be difined as
@@ -181,13 +196,8 @@ const service = {
   }
 }
 */
-app.services.forEach((service) => {
-  dropRepeats(states, service.onchange).map(state =>
-    service.run(createCell(state))
-  );
-});
 
-// actions object
+// returns actions object
 const Actions = (state, update) => {
   // form state will be stored in separated stream
   // initial stream changes to formState stream
@@ -231,42 +241,87 @@ const Actions = (state, update) => {
   const stup = lift(update);
   return {
 
+    // prevent default on event
     prevent(d) {
       let [e] = d;
       e.preventDefault();
       return false;
     },
 
+    // set view to home
     home(d) {
       stup({ view: 'home'});
       return this.prevent(d);
     },
 
+    // set view to login
     login(d) {
       stup({ view: 'login'});
       return this.prevent(d);
     },
 
+    // init login form
     initForm() {
       formId('');
       stup({formInitial: {}, form: formState});
       return false;
     },
 
+    // change form event
     changeForm(d) {
       let [e] = d;
       formChanges(e);
       return this.prevent(d);
     },
 
+    // clean up form if view changed
     cleanupForm() {
-      stup({form: undefined});
+      let form = state().form || undefined;
+      if (form) {
+        let username = form().username || undefined;
+        stup({form: undefined, username});
+      }
       return false;
     },
 
+    // set view to play
     play(d) {
       stup({view: 'play'})
       return this.prevent(d)
+    },
+
+    // load stored boxes from localStore
+    loadPlay() {
+      let user = state().username, self = this;
+      if (user) {
+        setTimeout(
+          () => self.countStat(
+            JSON.parse(
+              localStorage.getItem(user) || "[]"
+            )
+          ),
+          500
+        )
+      }
+    },
+
+    // store boxes to localStore return self.home
+    logout(d) {
+      return this.savePlay(d);
+    },
+
+    savePlay(d) {
+      let user = state().username, boxes= state().boxes; self = this;
+      if(user) {
+        setTimeout(
+          () => {
+            localStorage.setItem(user, JSON.stringify( boxes ));
+            self.countStat([]);
+            return self.home(d)
+          },
+          500
+        )
+      }
     },
 
     addBox(color) {
@@ -274,18 +329,28 @@ const Actions = (state, update) => {
         state().boxes.concat(color[0])
       );
     },
+
     removeBox(idx) {
       return this.countStat(
         state().boxes.filter((x, j) => idx[0] != j)
       );
     },
+
     countStat(boxes) {
+      console.log(boxes);
       let stat = R.countBy(I, boxes), description = descString(stat);
       stup({boxes, stat, description});
       return false;
     }
   };
 };
+
+// init apps services
+app.services.forEach((service) => {
+  dropRepeats(states, service.onchange).map(state =>
+    service.run(createCell(state))
+  );
+});
 
 // init application func
 const initApp = (actions) => {
@@ -297,10 +362,12 @@ const initApp = (actions) => {
 };
 initApp(Actions(states, update));
 
+// main view container
 const AppView = function(props) {
   return app.views[props.cell.state.view](props);
 }
 
+// react render
 const domContainer = document.getElementById('app');
 const root = ReactDOM.createRoot(domContainer);
 cells.map(cell => root.render( e(AppView, {cell} )));
